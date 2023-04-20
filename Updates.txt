@@ -1,0 +1,10 @@
+/***************************************************************************/
+[20/4/2023]
+Adding the LED strip in auxaliary 1 in ramps 1.4 (Ground and D57 pin).
+the G-Code to test that it is working is : M42 P57 S200
+• M42 the G-Code
+• P57 Pin number
+• S200 output power = 200
+
+reference video : https://www.youtube.com/watch?v=drhEKAQ6aoI
+/***************************************************************************/
