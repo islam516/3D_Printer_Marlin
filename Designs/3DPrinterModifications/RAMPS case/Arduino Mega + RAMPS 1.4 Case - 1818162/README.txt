@@ -1,0 +1,4 @@
+Arduino Mega + RAMPS 1.4 Case by rockstorm on Thingiverse: https://www.thingiverse.com/thing:1818162
+
+Summary:
+Arduino Mega + RAMPS 1.4 CaseA box/case/enclosure for the Arduino Mega + RAMPS assembly which includes:Cable-routing structuresFan mountRemovable lid for easy accessVentilation holesCreditsThe model of the Arduino Mega + RAMPS assembly shown in the pictures and used to develop the case is the RAMPS 1.4 Ardunio Mega Model by @archistrong.The hole case and specially the folding lid concept has been taken from the Ramps 1.4 Enclosure / Box / Case by @dasaki.LicenseThis work is licensed under a Creative Commons Attribution-ShareAlike 4.0 International License.DonatingIf you like this desing please consider donating. It helps me to keep designing! :)Bitcoin: 1K93F9NJr8DQtMwU9MKegE7uCBbLeb2GeX

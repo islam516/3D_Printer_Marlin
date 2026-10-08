@@ -1,0 +1,4 @@
+Bowden X-Carriage Mount for E3D v6 with 40mm Fan and BLTouch by Emphacy on Thingiverse: https://www.thingiverse.com/thing:3098894
+
+Summary:
+AIR is a Bowden mount for the E3D v6 with a 40mm cold-end cooling fan, 50mm 5015 layer fan and BLTouch bed levelling sensor. I have included a suitable X-Carriage for the Prusa i3 but feel free to design your own. The mounting hole spacing is 24mm (H) by 23mm (V) center-to-center.Important: If you print the layer fan duct in the same material you regularly print with then you MUST enable the layer fan when the hot-end is active to prevent warping of the duct.What you need1x E3D v61x 5015 Radial (Blower) Fan1x 40mm Axiel Fan1x BLTouch4x M3x55mm8x M3x25mm1x M3x20mm4x LM8UU (for Prusa i3 x-carriage)I recommend the Noctua NF A4x10 FLX as the cooling fan.BLTouch position (from nozzle): X = +36mm Y = 0mm. Z = +2mm - Z will not be perfect.

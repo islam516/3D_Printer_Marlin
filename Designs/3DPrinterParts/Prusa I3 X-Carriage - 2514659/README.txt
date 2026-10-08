@@ -1,0 +1,4 @@
+Prusa I3 X-Carriage by JackWaterfall on Thingiverse: https://www.thingiverse.com/thing:2514659
+
+Summary:
+Consider supporting me by sending me a tip on thingiverse or PayPal.paypal.me/jackwaterfallMake sure to post a make if you print one!Updates03/09/2017 - First release.What Is It?If you are upgrading your Prusa i3 hotend mount or extruder assemnly, you'll need some way of mounting it to your x rods. Theis x-carriage attaches to the x rods using linear bearings. This x-carriage uses the same four hole mounting system that is used on the Prusa I3 rework 1.5 kit and most designs on thingiverse, so you'll need to print off a compatible x-carriage mount.My Bowden X-Carriage Mount for E3D V6: https://www.thingiverse.com/thing:2023947This design uses a clamp to hold the bearings in place rather than using flimsy zip ties.NotesThanks to Josef Prusa. I took inspiration for this design from the Prusa MK2s x-carriage.
