@@ -301,6 +301,8 @@
  * M914 - Set StallGuard sensitivity. (Requires SENSORLESS_HOMING or SENSORLESS_PROBING)
  * M919 - Get or Set motor Chopper Times (time_off, hysteresis_end, hysteresis_start) using axis codes XYZE, etc. If no parameters are given, report. (Requires at least one _DRIVER_TYPE defined as TMC2130/2160/5130/5160/2208/2209/2660)
  * M936 - OTA update firmware. (Requires OTA_FIRMWARE_UPDATE)
+ * M947 - Report the persistent last thermal fault. (Requires LAST_THERMAL_FAULT)
+ * M948 - Clear the persistent last thermal fault. (Requires LAST_THERMAL_FAULT)
  * M951 - Set Magnetic Parking Extruder parameters. (Requires MAGNETIC_PARKING_EXTRUDER)
  * M3426 - Read MCP3426 ADC over I2C. (Requires HAS_MCP3426_ADC)
  * M7219 - Control Max7219 Matrix LEDs. (Requires MAX7219_GCODE)
@@ -1200,6 +1202,11 @@ private:
 
   #if HAS_MEDIA
     static void M928();
+  #endif
+
+  #if ENABLED(LAST_THERMAL_FAULT)
+    static void M947();
+    static void M948();
   #endif
 
   #if ENABLED(MAGNETIC_PARKING_EXTRUDER)

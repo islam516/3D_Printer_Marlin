@@ -813,10 +813,10 @@ volatile bool Temperature::raw_temps_ready = false;
                 if (current_temp > watch_temp_target) heated = true;  // - Flag if target temperature reached
               }
               else if (ELAPSED(ms, temp_change_ms))                   // Watch timer expired
-                _temp_error(heater_id, FPSTR(str_t_heating_failed), GET_TEXT_F(MSG_HEATING_FAILED_LCD));
+                _temp_error(heater_id, FPSTR(str_t_heating_failed), GET_TEXT_F(MSG_HEATING_FAILED_LCD), THERMAL_FAULT_HEATING_FAILED, current_temp, target);
             }
             else if (current_temp < target - (MAX_OVERSHOOT_PID_AUTOTUNE)) // Heated, then temperature fell too far?
-              _temp_error(heater_id, FPSTR(str_t_thermal_runaway), GET_TEXT_F(MSG_THERMAL_RUNAWAY));
+              _temp_error(heater_id, FPSTR(str_t_thermal_runaway), GET_TEXT_F(MSG_THERMAL_RUNAWAY), THERMAL_FAULT_RUNAWAY, current_temp, target);
           }
         #endif
       } // every 2 seconds
@@ -1295,9 +1295,54 @@ inline void loud_kill(FSTR_P const lcd_msg, const heater_id_t heater_id) {
   kill(lcd_msg, HEATER_FSTR(heater_id));
 }
 
-void Temperature::_temp_error(const heater_id_t heater_id, FSTR_P const serial_msg, FSTR_P const lcd_msg) {
+void Temperature::_temp_error(const heater_id_t heater_id, FSTR_P const serial_msg, FSTR_P const lcd_msg, const ThermalFaultType fault_type) {
+  celsius_float_t measured = 0, target = 0;
+
+  switch (heater_id) {
+    #if HAS_TEMP_REDUNDANT
+      case H_REDUNDANT: measured = degRedundant(); break;
+    #endif
+    #if HAS_TEMP_COOLER
+      case H_COOLER:
+        measured = degCooler();
+        TERN_(HAS_COOLER, target = degTargetCooler());
+        break;
+    #endif
+    #if HAS_TEMP_PROBE
+      case H_PROBE: measured = degProbe(); break;
+    #endif
+    #if HAS_TEMP_BOARD
+      case H_BOARD: measured = degBoard(); break;
+    #endif
+    #if HAS_TEMP_CHAMBER
+      case H_CHAMBER:
+        measured = degChamber();
+        TERN_(HAS_HEATED_CHAMBER, target = degTargetChamber());
+        break;
+    #endif
+    #if HAS_TEMP_BED
+      case H_BED:
+        measured = degBed();
+        TERN_(HAS_HEATED_BED, target = degTargetBed());
+        break;
+    #endif
+    default:
+      #if HAS_HOTEND
+        if (WITHIN(heater_id, 0, HOTENDS - 1)) {
+          measured = degHotend(heater_id);
+          target = degTargetHotend(heater_id);
+        }
+      #endif
+      break;
+  }
+
+  _temp_error(heater_id, serial_msg, lcd_msg, fault_type, measured, target);
+}
+
+void Temperature::_temp_error(const heater_id_t heater_id, FSTR_P const serial_msg, FSTR_P const lcd_msg, const ThermalFaultType fault_type, const celsius_float_t measured, const celsius_float_t target) {
 
   static uint8_t killed = 0;
+  const bool save_fault = IsRunning() && fault_type != THERMAL_FAULT_NONE;
 
   if (IsRunning() && TERN1(BOGUS_TEMPERATURE_GRACE_PERIOD, killed == 2)) {
     SERIAL_ERROR_START();
@@ -1326,6 +1371,13 @@ void Temperature::_temp_error(const heater_id_t heater_id, FSTR_P const serial_m
   }
 
   disable_all_heaters(); // always disable (even for bogus temp)
+
+  #if ENABLED(LAST_THERMAL_FAULT)
+    if (save_fault) LastThermalFault::store(fault_type, heater_id, measured, target);
+  #else
+    UNUSED(save_fault, measured, target, fault_type);
+  #endif
+
   hal.watchdog_refresh();
 
   #if BOGUS_TEMPERATURE_GRACE_PERIOD
@@ -1355,14 +1407,14 @@ void Temperature::maxtemp_error(const heater_id_t heater_id) {
   #if HAS_DWIN_E3V2_BASIC && (HAS_HOTEND || HAS_HEATED_BED)
     DWIN_Popup_Temperature(1);
   #endif
-  _temp_error(heater_id, F(STR_T_MAXTEMP), GET_TEXT_F(MSG_ERR_MAXTEMP));
+  _temp_error(heater_id, F(STR_T_MAXTEMP), GET_TEXT_F(MSG_ERR_MAXTEMP), THERMAL_FAULT_MAXTEMP);
 }
 
 void Temperature::mintemp_error(const heater_id_t heater_id) {
   #if HAS_DWIN_E3V2_BASIC && (HAS_HOTEND || HAS_HEATED_BED)
     DWIN_Popup_Temperature(0);
   #endif
-  _temp_error(heater_id, F(STR_T_MINTEMP), GET_TEXT_F(MSG_ERR_MINTEMP));
+  _temp_error(heater_id, F(STR_T_MINTEMP), GET_TEXT_F(MSG_ERR_MINTEMP), THERMAL_FAULT_MINTEMP);
 }
 
 #if HAS_PID_DEBUG
@@ -1581,7 +1633,7 @@ void Temperature::mintemp_error(const heater_id_t heater_id) {
             start_watching_hotend(e);               // If temp reached, turn off elapsed check
           else {
             TERN_(HAS_DWIN_E3V2_BASIC, DWIN_Popup_Temperature(0));
-            _temp_error((heater_id_t)e, FPSTR(str_t_heating_failed), GET_TEXT_F(MSG_HEATING_FAILED_LCD));
+            _temp_error((heater_id_t)e, FPSTR(str_t_heating_failed), GET_TEXT_F(MSG_HEATING_FAILED_LCD), THERMAL_FAULT_HEATING_FAILED);
           }
         }
       #endif
@@ -1606,7 +1658,7 @@ void Temperature::mintemp_error(const heater_id_t heater_id) {
           start_watching_bed();                 // If temp reached, turn off elapsed check
         else {
           TERN_(HAS_DWIN_E3V2_BASIC, DWIN_Popup_Temperature(0));
-          _temp_error(H_BED, FPSTR(str_t_heating_failed), GET_TEXT_F(MSG_HEATING_FAILED_LCD));
+          _temp_error(H_BED, FPSTR(str_t_heating_failed), GET_TEXT_F(MSG_HEATING_FAILED_LCD), THERMAL_FAULT_HEATING_FAILED);
         }
       }
     #endif // WATCH_BED
@@ -1690,7 +1742,7 @@ void Temperature::mintemp_error(const heater_id_t heater_id) {
         if (watch_chamber.check(degChamber()))  // Increased enough? Error below.
           start_watching_chamber();             // If temp reached, turn off elapsed check.
         else
-          _temp_error(H_CHAMBER, FPSTR(str_t_heating_failed), GET_TEXT_F(MSG_HEATING_FAILED_LCD));
+          _temp_error(H_CHAMBER, FPSTR(str_t_heating_failed), GET_TEXT_F(MSG_HEATING_FAILED_LCD), THERMAL_FAULT_HEATING_FAILED);
       }
     #endif
 
@@ -1814,7 +1866,7 @@ void Temperature::mintemp_error(const heater_id_t heater_id) {
       // Make sure temperature is decreasing
       if (watch_cooler.elapsed(ms)) {             // Time to check the cooler?
         if (degCooler() > watch_cooler.target)    // Failed to decrease enough?
-          _temp_error(H_COOLER, GET_EN_TEXT_F(MSG_COOLING_FAILED), GET_TEXT_F(MSG_COOLING_FAILED));
+          _temp_error(H_COOLER, GET_EN_TEXT_F(MSG_COOLING_FAILED), GET_TEXT_F(MSG_COOLING_FAILED), THERMAL_FAULT_NONE);
         else
           start_watching_cooler();                // Start again if the target is still far off
       }
@@ -1928,7 +1980,7 @@ void Temperature::task() {
   #if HAS_TEMP_REDUNDANT
     // Make sure measured temperatures are close together
     if (ABS(degRedundantTarget() - degRedundant()) > TEMP_SENSOR_REDUNDANT_MAX_DIFF)
-      _temp_error((heater_id_t)HEATER_ID(TEMP_SENSOR_REDUNDANT_TARGET), F(STR_REDUNDANCY), GET_TEXT_F(MSG_ERR_REDUNDANT_TEMP));
+      _temp_error((heater_id_t)HEATER_ID(TEMP_SENSOR_REDUNDANT_TARGET), F(STR_REDUNDANCY), GET_TEXT_F(MSG_ERR_REDUNDANT_TEMP), THERMAL_FAULT_NONE);
   #endif
 
   // Manage extruder auto fans and/or read fan tachometers
@@ -2989,12 +3041,12 @@ void Temperature::init() {
 
       case TRRunaway:
         TERN_(HAS_DWIN_E3V2_BASIC, DWIN_Popup_Temperature(0));
-        _temp_error(heater_id, FPSTR(str_t_thermal_runaway), GET_TEXT_F(MSG_THERMAL_RUNAWAY));
+        _temp_error(heater_id, FPSTR(str_t_thermal_runaway), GET_TEXT_F(MSG_THERMAL_RUNAWAY), THERMAL_FAULT_RUNAWAY, current, target);
 
       #if ENABLED(THERMAL_PROTECTION_VARIANCE_MONITOR)
         case TRMalfunction:
           TERN_(HAS_DWIN_E3V2_BASIC, DWIN_Popup_Temperature(0));
-          _temp_error(heater_id, FPSTR(str_t_temp_malfunction), GET_TEXT_F(MSG_TEMP_MALFUNCTION));
+          _temp_error(heater_id, FPSTR(str_t_temp_malfunction), GET_TEXT_F(MSG_TEMP_MALFUNCTION), THERMAL_FAULT_NONE);
       #endif
     }
   }

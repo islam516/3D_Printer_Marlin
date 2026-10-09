@@ -51,6 +51,10 @@
 #include "stepper.h"
 #include "temperature.h"
 
+#if ENABLED(LAST_THERMAL_FAULT)
+  #include "../feature/last_thermal_fault.h"
+#endif
+
 #include "../lcd/marlinui.h"
 #include "../libs/vector_3.h"   // for matrix_3x3
 #include "../gcode/gcode.h"
@@ -605,6 +609,14 @@ typedef struct SettingsDataStruct {
 MarlinSettings settings;
 
 uint16_t MarlinSettings::datasize() { return sizeof(SettingsData); }
+uint16_t MarlinSettings::storage_end() { return EEPROM_OFFSET + sizeof(SettingsData); }
+
+#if ENABLED(LAST_THERMAL_FAULT) && defined(__AVR__)
+  static_assert(
+    EEPROM_OFFSET + sizeof(SettingsData) <= E2END + 1 - LastThermalFault::eeprom_tail_reserve - LastThermalFault::eeprom_size,
+    "Last thermal fault record collides with EEPROM settings storage."
+  );
+#endif
 
 /**
  * Post-process after Retrieve or Reset
@@ -2849,7 +2861,7 @@ void MarlinSettings::postprocess() {
     // 128 (+1 because of the change to capacity rather than last valid address)
     // is a placeholder for the size of the MAT; the MAT will always
     // live at the very end of the eeprom
-    const uint16_t MarlinSettings::meshes_end = persistentStore.capacity() - 129;
+    const uint16_t MarlinSettings::meshes_end = TERN(LAST_THERMAL_FAULT, LastThermalFault::storage_address(), persistentStore.capacity() - 129);
 
     uint16_t MarlinSettings::meshes_start_index() {
       // Pad the end of configuration data so it can float up

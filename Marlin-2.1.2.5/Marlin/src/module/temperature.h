@@ -28,6 +28,7 @@
 #include "thermistor/thermistors.h"
 
 #include "../inc/MarlinConfig.h"
+#include "../feature/last_thermal_fault.h"
 
 #if ENABLED(AUTO_POWER_CONTROL)
   #include "../feature/power.h"
@@ -1253,7 +1254,8 @@ class Temperature {
       static float get_pid_output_chamber();
     #endif
 
-    static void _temp_error(const heater_id_t e, FSTR_P const serial_msg, FSTR_P const lcd_msg);
+    static void _temp_error(const heater_id_t e, FSTR_P const serial_msg, FSTR_P const lcd_msg, const ThermalFaultType fault_type);
+    static void _temp_error(const heater_id_t e, FSTR_P const serial_msg, FSTR_P const lcd_msg, const ThermalFaultType fault_type, const celsius_float_t measured, const celsius_float_t target);
     static void mintemp_error(const heater_id_t e);
     static void maxtemp_error(const heater_id_t e);
 

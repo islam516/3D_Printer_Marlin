@@ -1054,6 +1054,11 @@ void GcodeSuite::process_parsed_command(const bool no_ok/*=false*/) {
         case 951: M951(); break;                                  // M951: Set Magnetic Parking Extruder parameters
       #endif
 
+      #if ENABLED(LAST_THERMAL_FAULT)
+        case 947: M947(); break;                                  // M947: Report persistent last thermal fault
+        case 948: M948(); break;                                  // M948: Clear persistent last thermal fault
+      #endif
+
       #if ENABLED(Z_STEPPER_AUTO_ALIGN)
         case 422: M422(); break;                                  // M422: Set Z Stepper automatic alignment position using probe
       #endif

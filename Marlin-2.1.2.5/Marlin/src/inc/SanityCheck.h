@@ -2474,6 +2474,10 @@ static_assert(COUNT(arm) == LOGICAL_AXES, "AXIS_RELATIVE_MODES must contain " _L
   #endif
 #endif
 
+#if ENABLED(LAST_THERMAL_FAULT) && DISABLED(EEPROM_SETTINGS)
+  #error "LAST_THERMAL_FAULT requires EEPROM_SETTINGS."
+#endif
+
 /**
  * Make sure features that need to write to the SD card can
  */

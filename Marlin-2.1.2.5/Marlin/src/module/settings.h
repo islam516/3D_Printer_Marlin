@@ -41,6 +41,7 @@
 class MarlinSettings {
   public:
     static uint16_t datasize();
+    static uint16_t storage_end();
 
     static void reset();
     static bool save();    // Return 'true' if data was saved

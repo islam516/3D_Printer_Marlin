@@ -2055,6 +2055,12 @@
   //#define WATCHDOG_RESET_MANUAL
 #endif
 
+/**
+ * Persist the first fatal thermal fault of each boot in a dedicated,
+ * transactionally committed EEPROM record. M947 reports it; M948 clears it.
+ */
+#define LAST_THERMAL_FAULT
+
 // @section lcd
 
 /**
