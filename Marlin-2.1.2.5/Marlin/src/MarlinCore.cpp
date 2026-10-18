@@ -56,6 +56,9 @@
 #include "gcode/queue.h"
 
 #include "feature/pause.h"
+#if ENABLED(LAST_THERMAL_FAULT)
+  #include "feature/last_thermal_fault.h"
+#endif
 #include "sd/cardreader.h"
 
 #include "lcd/marlinui.h"
@@ -890,7 +893,7 @@ void idle(const bool no_stepper_sleep/*=false*/) {
  * Kill all activity and lock the machine.
  * After this the machine will need to be reset.
  */
-void kill(FSTR_P const lcd_error/*=nullptr*/, FSTR_P const lcd_component/*=nullptr*/, const bool steppers_off/*=false*/) {
+void kill(FSTR_P const lcd_error/*=nullptr*/, FSTR_P const lcd_component/*=nullptr*/, const bool steppers_off/*=false*/, const millis_t reboot_at/*=0*/) {
   thermalManager.disable_all_heaters();
 
   TERN_(HAS_CUTTER, cutter.kill()); // Full cutter shutdown including ISR control
@@ -913,13 +916,24 @@ void kill(FSTR_P const lcd_error/*=nullptr*/, FSTR_P const lcd_component/*=nullp
     hostui.kill();
   #endif
 
-  minkill(steppers_off);
+  minkill(steppers_off, reboot_at);
 }
 
-void minkill(const bool steppers_off/*=false*/) {
+void minkill(const bool steppers_off/*=false*/, const millis_t reboot_at/*=0*/) {
+
+  hal.watchdog_refresh();
 
   // Wait a short time (allows messages to get out before shutting down.
   for (int i = 1000; i--;) DELAY_US(600);
+
+  // millis() stops advancing after cli(). Capture the remaining automatic
+  // reboot delay now, then account for the final 250ms interrupt-settle wait.
+  millis_t reboot_delay = 0;
+  if (reboot_at) {
+    const millis_t now = millis();
+    reboot_delay = PENDING(now, reboot_at) ? reboot_at - now : 0;
+    reboot_delay = reboot_delay > 250 ? reboot_delay - 250 : 0;
+  }
 
   cli(); // Stop interrupts
 
@@ -937,6 +951,25 @@ void minkill(const bool steppers_off/*=false*/) {
   TERN_(PSU_CONTROL, powerManager.power_off());
 
   TERN_(HAS_SUICIDE, suicide());
+
+  if (reboot_at) {
+    // DELAY_US is safe with interrupts disabled. Refresh the watchdog in short
+    // slices so the configured 4s/8s watchdog cannot preempt the 15s hold.
+    while (reboot_delay) {
+      const uint16_t slice_ms = reboot_delay > 100 ? 100 : reboot_delay;
+      for (uint16_t i = slice_ms; i--;) DELAY_US(1000);
+      reboot_delay -= slice_ms;
+      hal.watchdog_refresh();
+    }
+
+    // AVR's normal reboot waits for the configured watchdog period. Use a
+    // short watchdog reset here so the requested deadline isn't extended.
+    #ifdef __AVR__
+      hal.reboot_now();
+    #else
+      hal.reboot();
+    #endif
+  }
 
   #if ANY(HAS_KILL, SOFT_RESET_ON_KILL)
 
@@ -1625,6 +1658,10 @@ void setup() {
       SERIAL_ECHOLNPGM("elapsed=", elapsed);
     #endif
     SETUP_RUN(ui.bootscreen_completion(elapsed));
+  #endif
+
+  #if ALL(LAST_THERMAL_FAULT, HAS_MARLINUI_U8GLIB, HAS_MARLINUI_MENU)
+    SETUP_RUN(LastThermalFault::show_boot_screen());
   #endif
 
   #if ENABLED(PASSWORD_ON_STARTUP)

@@ -35,6 +35,9 @@ enum ThermalFaultType : uint8_t {
       static bool store(const ThermalFaultType type, const int8_t heater_id, const float measured, const float target);
       static bool clear();
       static void report();
+      #if ALL(HAS_MARLINUI_U8GLIB, HAS_MARLINUI_MENU)
+        static void show_boot_screen();
+      #endif
   };
 
 #endif

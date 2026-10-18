@@ -2060,6 +2060,11 @@
  * transactionally committed EEPROM record. M947 reports it; M948 clears it.
  */
 #define LAST_THERMAL_FAULT
+#if ENABLED(LAST_THERMAL_FAULT)
+  // After a recorded thermal fault, keep all outputs off for this long, then reboot.
+  // A validated record is shown on the Full Graphics LCD after the boot screens.
+  #define LAST_THERMAL_FAULT_AUTO_REBOOT_MS 15000
+#endif
 
 // @section lcd
 

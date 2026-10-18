@@ -20,6 +20,17 @@ The stored information is:
 
 Only the first qualifying fatal thermal fault during a boot is recorded. A thermal fault normally halts the printer, so this avoids repeated EEPROM writes and preserves the original cause.
 
+The current revision also changes the fatal-error sequence for those four recorded fault types:
+
+1. Disable all heaters and capture/store the fault.
+2. Sound the existing short alert pattern, but do not leave the beeper continuously on.
+3. Keep the printer shut down until 15 seconds have elapsed from fault handling.
+4. Reset the Mega 2560 automatically.
+5. Finish the normal Marlin boot screens.
+6. Show a blocking Full Graphics LCD error screen until the encoder's OK button is pressed.
+
+The SD card is not involved. The record is held in the ATmega2560's internal EEPROM, so it is available with no SD card inserted.
+
 ## Target configuration inspected
 
 The project is configured for:
@@ -59,6 +70,47 @@ The relevant existing settings remain:
 | Required bed rise during watch | 2 C |
 
 ## Implementation approach
+
+### Automatic reset timing and shutdown state
+
+`LAST_THERMAL_FAULT_AUTO_REBOOT_MS` is set to `15000` in `Configuration_adv.h`.
+
+The automatic reboot is applied only when `_temp_error()` is handling one of the four recordable fault types while Marlin is running. Unrelated calls to `kill()`, including `M112`, retain their original halt/reset behavior.
+
+The deadline is established before the EEPROM operation. The existing kill path then:
+
+- Keeps all heaters disabled.
+- Emits the existing 20 short 25 ms alert chirps with 80 ms gaps.
+- Explicitly turns the beeper off instead of enabling a continuous tone.
+- Flushes the serial error message.
+- Disables interrupts, reiterates heater and cutter shutdown, and disables the extruder steppers.
+- Waits out the remainder of the 15-second deadline using interrupt-independent microsecond delays.
+- Refreshes the hardware watchdog every 100 ms during that final hold.
+- Performs a prompt hardware reset.
+
+The delay is an absolute `millis()` deadline, not an additional 15-second sleep after beeping and EEPROM storage. Small hardware and instruction timing tolerances still apply.
+
+### Full Graphics boot acknowledgment
+
+After the normal Marlin boot splash completes, a valid CRC-checked record produces a blocking 128x64 Full Graphics screen with this layout:
+
+```text
+             ERROR
+       THERMAL RUNAWAY
+          HEATER: BED
+      NOW:55.4 SET:60.0C
+  +--------------------+
+  |PRESS OK TO CONTINUE|
+  +--------------------+
+```
+
+The reason changes to `HEATING FAILED`, `MINTEMP`, or `MAXTEMP` as appropriate. Heater and captured measured/target values come from the validated EEPROM record.
+
+Marlin remains in `MF_INITIALIZING` while the screen is present. The boot-only wait services the encoder/LCD and refreshes the watchdog, but the normal G-code loop is not running. Heater targets are zero, and queued host commands cannot execute behind the warning.
+
+Pressing OK acknowledges the warning for that boot only. It does **not** erase the forensic record. Use `M948` after diagnosing and repairing the cause when the record should be cleared. Consequently, a valid record will be shown again after every reboot until `M948` succeeds.
+
+If a physical MINTEMP/MAXTEMP condition still exists when OK is pressed, normal temperature monitoring resumes after setup and Marlin may immediately fault, save, and reboot again. Repair the sensor/wiring before acknowledging a persistent sensor fault.
 
 ### Fault capture location
 
@@ -198,6 +250,12 @@ The configured AVR watchdog timeout is four seconds. A complete 16-byte AVR EEPR
 
 The existing AVR EEPROM backend also avoids unnecessary writes to bytes that already contain the requested value.
 
+During the automatic-reset hold, timer interrupts have already been stopped by Marlin's final kill path, so the code does not rely on `millis()` or Arduino `delay()`. It uses `DELAY_US(1000)` slices and refreshes the watchdog every 100 ms.
+
+The ordinary AVR `hal.reboot()` waits for the configured watchdog period, which is four seconds in this build. Adding that wait after the 15-second deadline would reset at about 19 seconds. A dedicated AVR `reboot_now()` therefore switches the watchdog to its shortest 15 ms hardware-reset period. This prompt-reset helper is used only by the new timed thermal-fault path; other reboot and kill behavior is unchanged.
+
+The post-boot acknowledgment loop runs with interrupts enabled and refreshes the watchdog directly because Marlin intentionally omits normal UI work from `idle()` while `marlin_state` is `MF_INITIALIZING`.
+
 ## G-code commands
 
 ### `M947` - report
@@ -258,6 +316,7 @@ The new commands were added to the command documentation, declarations, dispatch
   - CRC and validation
   - Transactional store/clear logic
   - Serial report formatting
+  - Validated-record Full Graphics boot screen and acknowledgment loop
 - `Marlin/src/gcode/eeprom/M947_M948.cpp`
   - `M947` report command
   - `M948` clear command
@@ -266,6 +325,7 @@ The new commands were added to the command documentation, declarations, dispatch
 
 - `Marlin/Configuration_adv.h`
   - Enables `LAST_THERMAL_FAULT`
+  - Sets the automatic thermal-fault reboot interval to 15 seconds
 - `ini/features.ini`
   - Adds the feature source files to PlatformIO's conditional source filter
 - `Marlin/src/module/temperature.h`
@@ -274,6 +334,14 @@ The new commands were added to the command documentation, declarations, dispatch
   - Tags requested fault types
   - Captures measured and target temperatures before shutdown
   - Stores the record after heaters are disabled
+  - Stops the beeper after the finite alert pattern
+  - Starts the thermal-fault-only automatic-reset deadline
+- `Marlin/src/MarlinCore.h` and `Marlin/src/MarlinCore.cpp`
+  - Carry the optional absolute reboot deadline through `kill()` / `minkill()`
+  - Hold outputs off and refresh the watchdog until the deadline
+  - Invoke the validated-record LCD screen after the normal boot splash
+- `Marlin/src/HAL/AVR/HAL.h` and `Marlin/src/HAL/AVR/HAL.cpp`
+  - Add the shortest-period watchdog reset used by the timed fault path
 - `Marlin/src/module/settings.h`
   - Exposes the end of the normal settings allocation
 - `Marlin/src/module/settings.cpp`
@@ -306,18 +374,20 @@ Final memory use:
 
 | Resource | Used | Available | Percentage |
 |---|---:|---:|---:|
-| SRAM | 4,872 bytes | 8,192 bytes | 59.5% |
-| Flash | 145,636 bytes | 253,952 bytes | 57.3% |
+| SRAM | 4,954 bytes | 8,192 bytes | 60.5% |
+| Flash | 146,994 bytes | 253,952 bytes | 57.9% |
 
 For comparison, the clean build before the feature used:
 
 - SRAM: 4,869 bytes
 - Flash: 143,334 bytes
 
-Feature cost in this configuration:
+Total feature cost in this configuration relative to the clean build:
 
-- SRAM: 3 bytes
-- Flash: 2,302 bytes
+- SRAM: 85 bytes
+- Flash: 3,660 bytes
+
+The automatic-reset and Full Graphics acknowledgment enhancement added 82 bytes of SRAM and 1,358 bytes of flash beyond the previously committed M947/M948 record implementation.
 
 Generated firmware:
 
@@ -328,7 +398,7 @@ Generated firmware:
 SHA-256:
 
 ```text
-EDB004015E193F681BFAC05D0874FF8429DEBFA2E5C26FA54D0898601A9C0228
+A544886330F89B015C1761E5B61B019030336EED9C508A186288C97FFC52290C
 ```
 
 The hash applies to the build produced during this implementation and will change after any source or configuration change.
@@ -338,13 +408,14 @@ The hash applies to the build produced during this implementation and will chang
 After a thermal shutdown:
 
 1. Do not bypass the fault or immediately restart heating.
-2. Inspect wiring, thermistor mounting, heater cartridge, terminals, MOSFETs, and power connections.
-3. Reset or power-cycle the controller.
-4. Connect over serial and run `M947`.
-5. Save the reported type, heater, measured temperature, and target temperature in the maintenance log.
-6. Correct the underlying fault.
-7. Run `M948` while the printer is idle to clear the record.
-8. Run `M947` again and confirm it reports `none`.
+2. Confirm the heater indicators and outputs turn off; the short chirps should stop after about two seconds.
+3. Let the controller reset automatically at about 15 seconds.
+4. Read the reason, heater, measured value, and target value on the post-splash ERROR screen.
+5. Correct the underlying fault, especially before acknowledging a persistent sensor problem.
+6. Press the encoder OK button to finish startup.
+7. Connect over serial and run `M947`; save its full report in the maintenance log.
+8. Run `M948` while the printer is idle to clear the record.
+9. Run `M947` again and confirm it reports `none`.
 
 `M500`, `M501`, and `M502` are not needed for this feature.
 
@@ -360,7 +431,25 @@ After a thermal shutdown:
 - Use a prewired switch or jumper installed only while all power is off if a thermistor circuit must be opened or shorted.
 - For sensor-fault tests, physically remove or switch off the 12/24 V heater supply and keep only the Mega logic powered over USB.
 - Verify heater MOSFET LEDs and heater outputs turn off immediately when a fault occurs.
-- Perform one test at a time, reboot, inspect with `M947`, and clear with `M948` before the next test.
+- Verify the beeper stops after the finite alert pattern and the board resets at approximately 15 seconds.
+- Before pressing OK after a sensor fault, restore the thermistor to a valid, safe state so the printer does not immediately fault again.
+- Perform one test at a time, allow the automatic reset, inspect with `M947`, and clear with `M948` before the next test.
+
+### Low-energy automatic-reset and LCD test
+
+This is the preferred test for the new behavior because the heater power supply remains physically off.
+
+1. Turn off and isolate the 12/24 V heater supply. Keep only the Mega 2560 logic powered over USB.
+2. With all power off beforehand, install a safe series switch in the hotend thermistor circuit; begin with it closed so the sensor reads normally.
+3. Restore USB logic power, press OK if an older record is shown, then run `M948` and verify `M947` reports `none`.
+4. Send `M104 S50` and open the prewired thermistor switch.
+5. Confirm `MINTEMP`, immediate heater shutdown, a finite alert lasting about two seconds, and automatic reset at approximately 15 seconds.
+6. Close the thermistor switch again **before** pressing OK.
+7. After the ordinary boot splash, verify the LCD shows `ERROR`, `MINTEMP`, `HEATER: E0`, captured `NOW` / `SET` values, and the boxed `PRESS OK TO CONTINUE` prompt.
+8. Press the encoder button and run `M947`; verify the serial record matches the LCD.
+9. Run `M948`, followed by `M947`, and verify the final response is `Last thermal fault: none`.
+
+Never open the thermistor circuit while heater power is available. This test deliberately removes heater energy so a wiring mistake cannot command a live heater during validation.
 
 ### Initial command test
 
@@ -384,9 +473,8 @@ This test does not require a hot heater.
 2. Physically disconnect or switch off the main heater supply while keeping USB logic power connected.
 3. Run `M948`.
 4. Send `M104 S50`.
-5. The measured temperature cannot rise by the configured 2 C within 40 seconds, so Marlin should issue `Heating failed` and halt.
-6. Reboot the controller.
-7. Run `M947`.
+5. The measured temperature cannot rise by the configured 2 C within 40 seconds, so Marlin should issue `Heating failed`, shut down, and reset about 15 seconds later.
+6. Verify the boot ERROR screen, press OK, and run `M947`.
 
 Expected type and target:
 
@@ -401,8 +489,8 @@ type=HEATING_FAILED heater=E0 ... target=50.0C
 3. Restore USB logic power with the thermistor connected.
 4. Run `M948` and then `M104 S50`.
 5. Open the prewired thermistor switch.
-6. Marlin should issue `MINTEMP` and halt.
-7. Reboot and run `M947`.
+6. Marlin should issue `MINTEMP`, shut down, and reset about 15 seconds later.
+7. Restore the thermistor circuit, verify the boot ERROR screen, press OK, and run `M947`.
 
 For the configured NTC thermistor input, an open circuit represents a very low temperature. Do not unplug the header by hand while heater power is present.
 
@@ -414,8 +502,8 @@ For the configured NTC thermistor input, an open circuit represents a very low t
 4. Start with the switch open.
 5. Run `M948` and optionally `M104 S50` so a nonzero target can be verified.
 6. Close the thermistor-input switch.
-7. Marlin should issue `MAXTEMP` and halt.
-8. Reboot and run `M947`.
+7. Marlin should issue `MAXTEMP`, shut down, and reset about 15 seconds later.
+8. Remove the short, verify the boot ERROR screen, press OK, and run `M947`.
 
 For the configured NTC thermistor input, a short represents a very high temperature. Never short an arbitrary RAMPS pin to ground; use only the verified two-pin thermistor header.
 
@@ -430,8 +518,8 @@ The heated bed provides a lower-temperature practical test than the hotend.
 5. Wait for the bed to reach and stabilize at 40 C.
 6. Use the PSU's normal switch to turn off the main heater supply without touching wiring.
 7. Leave USB logic power connected and do not clear the target.
-8. After the bed falls more than the configured 2 C hysteresis for the configured 20-second period, Marlin should issue `THERMAL RUNAWAY` and halt.
-9. Reboot and run `M947`.
+8. After the bed falls more than the configured 2 C hysteresis for the configured 20-second period, Marlin should issue `THERMAL RUNAWAY`, shut down, and reset about 15 seconds later.
+9. Verify the boot ERROR screen, press OK, and run `M947`.
 
 Expected type:
 

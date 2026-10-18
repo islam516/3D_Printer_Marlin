@@ -1265,7 +1265,7 @@ int16_t Temperature::getHeaterPower(const heater_id_t heater_id) {
 // Temperature Error Handlers
 //
 
-inline void loud_kill(FSTR_P const lcd_msg, const heater_id_t heater_id) {
+inline void loud_kill(FSTR_P const lcd_msg, const heater_id_t heater_id, const millis_t reboot_at=0) {
   marlin_state = MF_KILLED;
   thermalManager.disable_all_heaters();
   #if HAS_BEEPER
@@ -1275,7 +1275,7 @@ inline void loud_kill(FSTR_P const lcd_msg, const heater_id_t heater_id) {
       delay(80);
       hal.watchdog_refresh();
     }
-    buzzer.on();
+    buzzer.off();
   #endif
   #if ENABLED(NOZZLE_PARK_FEATURE)
     if (!homing_needed_error()) {
@@ -1292,7 +1292,7 @@ inline void loud_kill(FSTR_P const lcd_msg, const heater_id_t heater_id) {
                          _FSTR_E(h,1) _FSTR_E(h,2) _FSTR_E(h,3) _FSTR_E(h,4) \
                          _FSTR_E(h,5) _FSTR_E(h,6) _FSTR_E(h,7) F(STR_E0)
 
-  kill(lcd_msg, HEATER_FSTR(heater_id));
+  kill(lcd_msg, HEATER_FSTR(heater_id), false, reboot_at);
 }
 
 void Temperature::_temp_error(const heater_id_t heater_id, FSTR_P const serial_msg, FSTR_P const lcd_msg, const ThermalFaultType fault_type) {
@@ -1343,6 +1343,11 @@ void Temperature::_temp_error(const heater_id_t heater_id, FSTR_P const serial_m
 
   static uint8_t killed = 0;
   const bool save_fault = IsRunning() && fault_type != THERMAL_FAULT_NONE;
+  #if ENABLED(LAST_THERMAL_FAULT) && LAST_THERMAL_FAULT_AUTO_REBOOT_MS > 0
+    const millis_t reboot_at = save_fault ? millis() + millis_t(LAST_THERMAL_FAULT_AUTO_REBOOT_MS) : 0;
+  #else
+    constexpr millis_t reboot_at = 0;
+  #endif
 
   if (IsRunning() && TERN1(BOGUS_TEMPERATURE_GRACE_PERIOD, killed == 2)) {
     SERIAL_ERROR_START();
@@ -1392,14 +1397,14 @@ void Temperature::_temp_error(const heater_id_t heater_id, FSTR_P const serial_m
         if (ELAPSED(ms, expire_ms)) ++killed;
         break;
       case 2:
-        loud_kill(lcd_msg, heater_id);
+        loud_kill(lcd_msg, heater_id, reboot_at);
         ++killed;
         break;
     }
   #elif defined(BOGUS_TEMPERATURE_GRACE_PERIOD)
     UNUSED(killed);
   #else
-    if (!killed) { killed = 1; loud_kill(lcd_msg, heater_id); }
+    if (!killed) { killed = 1; loud_kill(lcd_msg, heater_id, reboot_at); }
   #endif
 }
 

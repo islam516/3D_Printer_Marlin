@@ -94,6 +94,17 @@ void MarlinHAL::reboot() {
   #endif
 }
 
+void MarlinHAL::reboot_now() {
+  #if ENABLED(USE_WATCHDOG)
+    // Force reset mode even when WATCHDOG_RESET_MANUAL selected interrupt mode.
+    cli();
+    wdt_enable(WDTO_15MS);
+    while (1) { /* wait for the hardware reset */ }
+  #else
+    reboot();
+  #endif
+}
+
 // ------------------------
 // Watchdog Timer
 // ------------------------

@@ -23,7 +23,14 @@
 #include "../module/settings.h"
 #include "../module/temperature.h"
 
+#if ALL(HAS_MARLINUI_U8GLIB, HAS_MARLINUI_MENU)
+  #include "../lcd/marlinui.h"
+  #include "../lcd/dogm/marlinui_DOGM.h"
+  #include "../lcd/lcdprint.h"
+#endif
+
 #include <stddef.h>
+#include <string.h>
 
 namespace {
 
@@ -104,6 +111,79 @@ namespace {
       default:            SERIAL_CHAR('E'); SERIAL_ECHO(int(heater_id)); break;
     }
   }
+
+  #if ALL(HAS_MARLINUI_U8GLIB, HAS_MARLINUI_MENU)
+
+    StoredThermalFault boot_fault;
+    bool boot_fault_acknowledged;
+    char boot_heater_line[21], boot_temperature_line[24];
+
+    FSTR_P boot_fault_reason(const uint8_t type) {
+      switch (type) {
+        case THERMAL_FAULT_HEATING_FAILED: return F("HEATING FAILED");
+        case THERMAL_FAULT_RUNAWAY:        return F("THERMAL RUNAWAY");
+        case THERMAL_FAULT_MINTEMP:        return F("MINTEMP");
+        case THERMAL_FAULT_MAXTEMP:        return F("MAXTEMP");
+        default:                           return F("UNKNOWN");
+      }
+    }
+
+    FSTR_P boot_heater_name(const int8_t heater_id) {
+      switch (heater_id) {
+        case HID_REDUNDANT: return F("REDUNDANT");
+        case HID_BOARD:     return F("BOARD");
+        case HID_COOLER:    return F("COOLER");
+        case HID_PROBE:     return F("PROBE");
+        case HID_CHAMBER:   return F("CHAMBER");
+        case HID_BED:       return F("BED");
+        default:            return nullptr;
+      }
+    }
+
+    void format_deci_celsius(char * const out, const size_t size, const int16_t value) {
+      const bool negative = value < 0;
+      const uint16_t magnitude = negative ? uint16_t(-int32_t(value)) : uint16_t(value);
+      snprintf_P(out, size, negative ? PSTR("-%u.%u") : PSTR("%u.%u"), magnitude / 10, magnitude % 10);
+    }
+
+    void draw_centered(FSTR_P const text, const u8g_uint_t y) {
+      const int width = calculateWidth(text);
+      lcd_put_u8str(width < LCD_PIXEL_WIDTH ? (LCD_PIXEL_WIDTH - width) / 2 : 0, y, text);
+    }
+
+    void draw_centered(const char * const text, const u8g_uint_t y) {
+      const uint16_t width = strlen(text) * MENU_FONT_WIDTH;
+      const u8g_uint_t x = width < LCD_PIXEL_WIDTH ? (LCD_PIXEL_WIDTH - width) / 2 : 0;
+      lcd_moveto(x, y);
+      lcd_put_u8str_max(text, LCD_PIXEL_WIDTH - x);
+    }
+
+    void draw_boot_fault_screen() {
+      if (ui.use_click()) boot_fault_acknowledged = true;
+      if (boot_fault_acknowledged) return;
+
+      ui.defer_status_screen();
+      ui.set_font(FONT_MENU);
+
+      if (PAGE_CONTAINS(0, 11)) {
+        u8g.setColorIndex(1);
+        u8g.drawBox(0, 0, LCD_PIXEL_WIDTH, 12);
+        u8g.setColorIndex(0);
+        draw_centered(F("ERROR"), 10);
+        u8g.setColorIndex(1);
+      }
+
+      if (PAGE_CONTAINS(12, 24)) draw_centered(boot_fault_reason(boot_fault.type), 22);
+      if (PAGE_CONTAINS(25, 36)) draw_centered(boot_heater_line, 34);
+      if (PAGE_CONTAINS(37, 48)) draw_centered(boot_temperature_line, 46);
+
+      if (PAGE_CONTAINS(49, 63)) {
+        u8g.drawFrame(1, 49, LCD_PIXEL_WIDTH - 2, 15);
+        draw_centered(F("PRESS OK TO CONTINUE"), 61);
+      }
+    }
+
+  #endif
 
 } // namespace
 
@@ -193,5 +273,52 @@ void LastThermalFault::report() {
   SERIAL_ECHO_F(record.target_x10 * 0.1f, 1);
   SERIAL_ECHOLNPGM("C");
 }
+
+#if ALL(HAS_MARLINUI_U8GLIB, HAS_MARLINUI_MENU)
+
+  void LastThermalFault::show_boot_screen() {
+    StoredThermalFault record;
+    if (read_record(record) != RECORD_VALID) return;
+
+    boot_fault = record;
+
+    strcpy_P(boot_heater_line, PSTR("HEATER: "));
+    const FSTR_P heater_name = boot_heater_name(record.heater_id);
+    if (heater_name)
+      strcat_P(boot_heater_line, FTOP(heater_name));
+    else
+      snprintf_P(boot_heater_line, sizeof(boot_heater_line), PSTR("HEATER: E%i"), int(record.heater_id));
+
+    char measured[8], target[8];
+    format_deci_celsius(measured, sizeof(measured), record.measured_x10);
+    format_deci_celsius(target, sizeof(target), record.target_x10);
+    snprintf_P(boot_temperature_line, sizeof(boot_temperature_line), PSTR("NOW:%s SET:%sC"), measured, target);
+
+    // Ignore a button held through startup, then block setup until a fresh
+    // encoder click. Marlin remains MF_INITIALIZING, so queued G-code cannot
+    // run behind this screen and Temperature::task only services the watchdog.
+    while (ui.button_pressed()) {
+      hal.watchdog_refresh();
+      delay(10);
+    }
+    (void)ui.use_click();
+
+    boot_fault_acknowledged = false;
+    ui.goto_screen(draw_boot_fault_screen);
+    ui.defer_status_screen();
+    while (!boot_fault_acknowledged) {
+      ui.update();
+      hal.watchdog_refresh();
+      delay(5);
+    }
+
+    while (ui.button_pressed()) {
+      hal.watchdog_refresh();
+      delay(10);
+    }
+    ui.return_to_status();
+  }
+
+#endif
 
 #endif // LAST_THERMAL_FAULT

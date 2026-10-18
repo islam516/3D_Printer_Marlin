@@ -38,8 +38,9 @@ inline void idle_no_sleep() { idle(true); }
   extern bool G38_did_trigger;      // Flag from the ISR to indicate the endstop changed
 #endif
 
-void kill(FSTR_P const lcd_error=nullptr, FSTR_P const lcd_component=nullptr, const bool steppers_off=false);
-void minkill(const bool steppers_off=false);
+// A nonzero reboot_at is an absolute millis() deadline for an automatic reboot.
+void kill(FSTR_P const lcd_error=nullptr, FSTR_P const lcd_component=nullptr, const bool steppers_off=false, const millis_t reboot_at=0);
+void minkill(const bool steppers_off=false, const millis_t reboot_at=0);
 
 // Global State of the firmware
 enum MarlinState : uint8_t {

@@ -198,6 +198,7 @@ public:
   static void init();          // Called early in setup()
   static void init_board() {}  // Called less early in setup()
   static void reboot();        // Restart the firmware from 0x0
+  static void reboot_now();    // Restart promptly using the shortest watchdog period
 
   // Interrupts
   static bool isr_state() { return TEST(SREG, SREG_I); }
