@@ -115,7 +115,7 @@ namespace {
   #if ALL(HAS_MARLINUI_U8GLIB, HAS_MARLINUI_MENU)
 
     StoredThermalFault boot_fault;
-    bool boot_fault_acknowledged;
+    bool boot_fault_finished, boot_fault_clear_failed;
     char boot_heater_line[21], boot_temperature_line[24];
 
     FSTR_P boot_fault_reason(const uint8_t type) {
@@ -158,9 +158,37 @@ namespace {
       lcd_put_u8str_max(text, LCD_PIXEL_WIDTH - x);
     }
 
+    void draw_boot_fault_button(const u8g_uint_t x, const u8g_uint_t width, FSTR_P const text, const bool selected) {
+      constexpr u8g_uint_t y = 49, height = 15;
+      if (!PAGE_CONTAINS(y, y + height - 1)) return;
+
+      if (selected) {
+        u8g.drawBox(x, y, width, height);
+        u8g.setColorIndex(0);
+      }
+      else
+        u8g.drawFrame(x, y, width, height);
+
+      const int text_width = calculateWidth(text);
+      lcd_put_u8str(x + (text_width < width ? (width - text_width) / 2 : 0), 61, text);
+      if (selected) u8g.setColorIndex(1);
+    }
+
     void draw_boot_fault_screen() {
-      if (ui.use_click()) boot_fault_acknowledged = true;
-      if (boot_fault_acknowledged) return;
+      const bool clear_selected = ui.update_selection();
+      if (ui.use_click()) {
+        if (!clear_selected)
+          boot_fault_finished = true;
+        else if (LastThermalFault::clear()) {
+          SERIAL_ECHO_MSG("Last thermal fault cleared from LCD");
+          boot_fault_finished = true;
+        }
+        else {
+          SERIAL_ERROR_MSG("Unable to clear last thermal fault from LCD");
+          boot_fault_clear_failed = true;
+        }
+      }
+      if (boot_fault_finished) return;
 
       ui.defer_status_screen();
       ui.set_font(FONT_MENU);
@@ -175,12 +203,11 @@ namespace {
 
       if (PAGE_CONTAINS(12, 24)) draw_centered(boot_fault_reason(boot_fault.type), 22);
       if (PAGE_CONTAINS(25, 36)) draw_centered(boot_heater_line, 34);
-      if (PAGE_CONTAINS(37, 48)) draw_centered(boot_temperature_line, 46);
+      if (PAGE_CONTAINS(37, 48))
+        boot_fault_clear_failed ? draw_centered(F("CLEAR FAILED"), 46) : draw_centered(boot_temperature_line, 46);
 
-      if (PAGE_CONTAINS(49, 63)) {
-        u8g.drawFrame(1, 49, LCD_PIXEL_WIDTH - 2, 15);
-        draw_centered(F("PRESS OK TO CONTINUE"), 61);
-      }
+      draw_boot_fault_button(4, 52, F("OK"), !clear_selected);
+      draw_boot_fault_button(72, 52, F("CLEAR"), clear_selected);
     }
 
   #endif
@@ -295,18 +322,19 @@ void LastThermalFault::report() {
     snprintf_P(boot_temperature_line, sizeof(boot_temperature_line), PSTR("NOW:%s SET:%sC"), measured, target);
 
     // Ignore a button held through startup, then block setup until a fresh
-    // encoder click. Marlin remains MF_INITIALIZING, so queued G-code cannot
-    // run behind this screen and Temperature::task only services the watchdog.
+    // encoder selection and click. Marlin remains MF_INITIALIZING, so queued
+    // G-code cannot run behind this screen and only the watchdog is serviced.
     while (ui.button_pressed()) {
       hal.watchdog_refresh();
       delay(10);
     }
     (void)ui.use_click();
 
-    boot_fault_acknowledged = false;
+    boot_fault_finished = boot_fault_clear_failed = false;
+    ui.set_selection(false); // Default to OK so clearing always requires an explicit selection.
     ui.goto_screen(draw_boot_fault_screen);
     ui.defer_status_screen();
-    while (!boot_fault_acknowledged) {
+    while (!boot_fault_finished) {
       ui.update();
       hal.watchdog_refresh();
       delay(5);
